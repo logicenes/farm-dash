@@ -466,22 +466,40 @@ function makeStand(x,z,awning){
   box(1.6,.5,.08,M(0xfff4d8),0,2.95,-.55,g);
   box(1.1,.12,1.0,M(C.woodDark),-.85,1.15,0,g);box(1.1,.12,1.0,M(0xe9d6b0),.85,1.15,0,g);
   addCol(x,z,3.5,1.4);
-  const st={g,x,z,stock:{corn:[],egg:[]},queue:[],serveT:0,drop:pt(x,z-1.75)};
+  const st={g,x,z,stock:{corn:[],egg:[]},queue:[],serveT:0,drop:pt(x,z-1.75),cap:()=>S.standCap,slot:stockSlot};
   st.ring=zoneRing(x,z-1.75,.85,0x5fd36a,'🛒');stands.push(st);return st}
 function stockSlot(type,i,out){const layer=(i/12)|0,w=i%12,row=((w/4)|0)-1;
   if(type==='corn')return out.set(-1.25+(w%4)*.17,1.24+layer*.17,row*.26);
   return out.set(.55+(w%4)*.19,1.26+layer*.2,row*.24)}
 function stockCount(st,t){let n=0;for(const it of st.stock[t])if(!it.userData.inFlight)n++;return n}
-function depositStand(carrier,st){
-  for(let i=carrier.items.length-1;i>=0;i--){const it=carrier.items[i];if(it.userData.inFlight)continue;const t=it.userData.type;const arr=st.stock[t];if(arr.length>=S.standCap)continue;
+function depositStand(carrier,st){const cap=st.cap();
+  for(let i=carrier.items.length-1;i>=0;i--){const it=carrier.items[i];if(it.userData.inFlight)continue;const t=it.userData.type;const arr=st.stock[t];if(arr.length>=cap)continue;
     carrier.items.splice(i,1);arr.push(it);it.userData.inFlight=true;
-    fly(it,out=>{const j=arr.indexOf(it);stockSlot(t,Math.max(0,j),out);if(t==='corn')out.x+=0;st.g.localToWorld(out)},.3,.8,o=>{o.userData.inFlight=false;const j=arr.indexOf(o);if(j<0){releaseItem(o);return}st.g.add(o);stockSlot(t,j,o.position);o.rotation.set(0,t==='corn'?Math.PI/2:0,0);o.scale.setScalar(1.25);sfx.drop()});
+    fly(it,out=>{const j=arr.indexOf(it);st.slot(t,Math.max(0,j),out);st.g.localToWorld(out)},.3,.8,o=>{o.userData.inFlight=false;const j=arr.indexOf(o);if(j<0){releaseItem(o);return}st.g.add(o);st.slot(t,j,o.position);if(st.onChange)st.onChange();o.rotation.set(0,t==='corn'?Math.PI/2:0,0);o.scale.setScalar(1.25);sfx.drop()});
     st.ring.active=1;return true}
   return false}
 function takeStock(st,t){const arr=st.stock[t];for(let i=arr.length-1;i>=0;i--){if(arr[i].userData.inFlight)continue;return arr.splice(i,1)[0]}return null}
+function updateStoreItems(st,k){for(const t of ['corn','egg']){const arr=st.stock[t];for(let i=0;i<arr.length;i++){const it=arr[i];if(it.userData.inFlight||it.parent!==st.g)continue;st.slot(t,i,_c);it.position.lerp(_c,k);const s=it.scale.x;if(s!==1)it.scale.setScalar(Math.abs(s-1)<.01?1:lerp(s,1,k))}}}
+function standFree(st){return 2*st.cap()-st.stock.corn.length-st.stock.egg.length}
+/* ---------- LAGERHAUS: echtes Zwischenlager ----------
+   Einlagern: mit vollem/teilweisem Korb in den 📦-Kreis laufen.
+   Abholen:   mit LEEREM Korb in den Kreis laufen -> Korb wird aus dem Lager gefüllt.
+   Mitarbeiter lagern ein, wenn alle Stände voll sind, und füllen Stände aus dem Lager nach. */
+let WH=null;
+function whSlot(t,i,out){if(t==='corn'){const layer=(i/6)|0,w=i%6;return out.set(-2.05+(w%3)*.22,.24+layer*.17,2.3+((w/3)|0)*.45)}
+  const layer=(i/12)|0,w=i%12;return out.set(1.15+(w%4)*.24,.27+layer*.22,2.2+((w/4)|0)*.27)}
+function whCount(){return WH?WH.stock.corn.length+WH.stock.egg.length:0}
+function drawWH(){const {ctx,c,tex}=WH.label.userData;ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='rgba(22,40,26,.88)';rr(ctx,4,4,c.width-8,c.height-8,24);ctx.fill();
+  ctx.font='900 34px system-ui,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
+  ctx.fillText('📦 LAGER  🌽'+WH.stock.corn.length+'  🥚'+WH.stock.egg.length,c.width/2,40);tex.needsUpdate=true}
+function withdrawStore(carrier,st,prefer){if(carrier.full)return false;
+  const order=prefer?[prefer,prefer==='egg'?'corn':'egg']:(st.stock.egg.length>=st.stock.corn.length?['egg','corn']:['corn','egg']);
+  for(const t of order){const it=takeStock(st,t);if(it){carrier.receive(it);st.ring.active=1;if(st.onChange)st.onChange();return true}}return false}
+function standNeeds(){let need=null,best=0;for(const s of stands)for(const t of ['egg','corn']){const free=s.cap()-s.stock[t].length;if(free>best&&WH.stock[t].length>0){best=free;need=t}}return best>=3?need:null}
 function updateStands(dt){const k=damp(12,dt);
+  if(WH)updateStoreItems(WH,k);
   for(const st of stands){
-    for(const t of ['corn','egg']){const arr=st.stock[t];for(let i=0;i<arr.length;i++){const it=arr[i];if(it.userData.inFlight||it.parent!==st.g)continue;stockSlot(t,i,_c);it.position.lerp(_c,k);const s=it.scale.x;if(s!==1)it.scale.setScalar(Math.abs(s-1)<.01?1:lerp(s,1,k))}}
+    updateStoreItems(st,k);
     const c=st.queue[0];
     if(c&&c.state==='queue'&&c.atSpot){st.serveT-=dt;if(st.serveT<=0){st.serveT=.3;let served=false;
       for(const t of ['egg','corn']){if(c.wish[t]>0){const it=takeStock(st,t);if(it){c.wish[t]--;c.pending++;served=true;
@@ -566,6 +584,7 @@ class Worker{
   wait(s){this.state='think';this.timer=s}
   decide(){const c=this.carrier,p=this.pos;
     if(c.full)return this.deliver();
+    if(WH&&c.n===0){const need=standNeeds();if(need)return this.fetchWH(need)}
     const egg=findEgg(p.x,p.z,true),plant=findRipe(p.x,p.z,1e9,true);
     if(this.focus==='egg'&&egg)return this.collectEgg(egg);
     if(plant)return this.harvest(plant);
@@ -584,10 +603,14 @@ class Worker{
       if(tr){this.setIcon('🐔');return this.goTo(tr.zone.x+rand(-.3,.3),tr.zone.z+.15,()=>{this.h.yaw=Math.PI;let x=0;
         this.act(30,()=>{if(c.n>0)this.toStand();else{this.focus=this.focus==='egg'?'corn':'egg';this.wait(.2)}},dt=>{x-=dt;if(x>0)return;x=.2;if(!feedTrough(c,tr))this.timer=0})})}}
     this.toStand()}
-  toStand(){let st=null,best=-1;for(const s of stands){const free=2*S.standCap-s.stock.corn.length-s.stock.egg.length;if(free>best){best=free;st=s}}
-    if(!st||best<=0){this.setIcon('⏳');return this.wait(1.5)}
+  fetchWH(type){this.setIcon('📦');this.goTo(WH.drop.x+rand(-.4,.4),WH.drop.z+.2,()=>{this.h.yaw=Math.PI;let x=0;
+      this.act(30,()=>{if(this.carrier.n>0)this.toStand();else this.wait(.3)},dt=>{x-=dt;if(x>0)return;x=.16;if(this.carrier.count(type)>=6||!withdrawStore(this.carrier,WH,type))this.timer=0})})}
+  toWH(){this.setIcon('📦');this.goTo(WH.drop.x+rand(-.4,.4),WH.drop.z+.2,()=>{this.h.yaw=Math.PI;let x=0;
+      this.act(30,()=>{if(this.carrier.n>0){this.setIcon('⏳');this.wait(1.5)}else{this.focus=this.focus==='egg'?'corn':'egg';this.wait(.2)}},dt=>{x-=dt;if(x>0)return;x=.14;if(!depositStand(this.carrier,WH))this.timer=0})})}
+  toStand(){let st=null,best=-1;for(const s of stands){let free=0;for(const it of this.carrier.items)if(s.stock[it.userData.type].length+free<s.cap())free++;if(free>best){best=free;st=s}}
+    if(!st||best<=0){if(WH&&standFree(WH)>0)return this.toWH();this.setIcon('⏳');return this.wait(1.5)}
     this.setIcon('🛒');this.goTo(st.drop.x+rand(-.5,.5),st.drop.z-.1,()=>{this.h.yaw=0;let x=0;
-      this.act(30,()=>{if(this.carrier.n>0){this.setIcon('⏳');this.wait(1.5)}else{this.focus=this.focus==='egg'?'corn':'egg';this.wait(.2)}},dt=>{x-=dt;if(x>0)return;x=.16;if(!depositStand(this.carrier,st))this.timer=0})})}
+      this.act(30,()=>{if(this.carrier.n>0){if(WH&&standFree(WH)>0)return this.toWH();this.setIcon('⏳');this.wait(1.5)}else{this.focus=this.focus==='egg'?'corn':'egg';this.wait(.2)}},dt=>{x-=dt;if(x>0)return;x=.16;if(!depositStand(this.carrier,st))this.timer=0})})}
   idle(){this.setIcon('💤');const tx=HUT.door.x+(this.i?1.2:-1.2),tz=HUT.door.z-.6;
     if(Math.hypot(this.pos.x-tx,this.pos.z-tz)<.5)return this.wait(1);this.goTo(tx,tz,()=>this.wait(1))}
   update(dt,t){let moving=0;
@@ -663,7 +686,15 @@ const UNLOCK_FX={
   warehouse(){S.priceMult=1.25;S.standCap=48;const g=new THREE.Group();g.position.set(13,0,10);scene.add(g);
     box(5.2,3,3.6,M(0x8fa7b8),0,1.5,0,g);gableRoof(5.4,3.6,1.2,M(0x8fa7b8),M(0x55697a),g,3);box(2.2,2.2,.1,M(0xd8dde2),0,1.1,1.82,g);for(let i=0;i<6;i++)box(2.2,.04,.12,M(0xaab3bb),0,.3+i*.35,1.88,g,false);
     box(.9,.9,.9,M(C.wood),-2.9,.45,1.3,g);box(.7,.7,.7,M(C.wood),-2.95,1.25,1.3,g);box(.9,.9,.9,M(0xd9c06a),2.9,.45,1.4,g);
-    addCol(13,10,5.4,3.8);popIn(g);toast('🏭 Lagerhaus: +25 % Preise, Stände fassen mehr!')},
+    for(const px of [-1.8,1.5]){box(1.25,.12,1.15,M(0xb98a52),px,.06,2.55,g);for(const pz of [2.1,3.0])box(1.25,.06,.14,M(C.woodDark),px,.15,pz,g,false)}
+    addCol(13,10,5.4,3.8);popIn(g);
+    WH={g,x:13,z:10,stock:{corn:[],egg:[]},drop:pt(13,13.15),cap:()=>36,slot:whSlot};
+    WH.ring=zoneRing(13,13.15,1.05,0x3d8bff,'📦');
+    {const c=document.createElement('canvas');c.width=512;c.height=128;const q=c.getContext('2d');q.fillStyle='#2f5f9e';rr(q,0,0,512,128,22);q.fill();q.fillStyle='#fff';q.font='900 64px system-ui,sans-serif';q.textAlign='center';q.textBaseline='middle';q.fillText('📦 LAGER',256,68);
+     const tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;const sign=new THREE.Mesh(new THREE.PlaneGeometry(2.4,.6),new THREE.MeshStandardMaterial({map:tex,roughness:.7}));sign.position.set(0,2.6,1.86);g.add(sign)}
+    WH.hint=canvasSprite(420,90,.8);{const {ctx,c,tex}=WH.hint.userData;ctx.fillStyle='rgba(47,95,158,.92)';rr(ctx,4,4,412,82,24);ctx.fill();ctx.fillStyle='#fff';ctx.font='800 30px system-ui,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Voll rein = einlagern · Leer rein = abholen',210,47);tex.needsUpdate=true}
+    WH.hint.position.set(13,.9,14.6);scene.add(WH.hint);WH.label=canvasSprite(400,80,.6);WH.label.position.set(0,4.3,1.2);g.add(WH.label);WH.onChange=drawWH;drawWH();
+    toast('🏭 Lager: Waren im 📦-Kreis einlagern · leer hinein = abholen')},
   speed(){S.workerFast=true;for(const w of workers){w.speed=CFG.workerSpeedFast;w.carrier.cap=CFG.workerCarry+2;popIn(w.h.root,.4)}}
 };
 
@@ -714,11 +745,12 @@ function computeTask(){const c=P.carrier,pp=P.h.root.position,corn=c.count('corn
   const hungry=()=>{let tr=null;for(const y of yards){const t=y.trough;if(t.feed+t.incoming<3&&(!tr||t.feed<tr.feed))tr=t}return tr};
   const stand=()=>{let best=null,bd=1e9;for(const s of stands){const d=Math.hypot(s.drop.x-pp.x,s.drop.z-pp.z);if(d<bd){bd=d;best=s}}return best};
   if(pad&&c.n<c.cap)return setTask('💰','Freischalten: '+pad.u.title,pad.g.position.x,pad.g.position.z);
-  if(c.full){const tr=corn>0?hungry():null;if(tr)return setTask('🐔','Hühner füttern – Mais zum Trog',tr.zone.x,tr.zone.z);const s=stand();return setTask('🛒','Korb voll! Ab zum Marktstand',s.drop.x,s.drop.z)}
+  if(c.full){const tr=corn>0?hungry():null;if(tr)return setTask('🐔','Hühner füttern – Mais zum Trog',tr.zone.x,tr.zone.z);const s=stand();if(WH&&stands.every(q=>standFree(q)<=0))return setTask('📦','Stände voll – ins Lager bringen',WH.drop.x,WH.drop.z);return setTask('🛒','Korb voll! Ab zum Marktstand',s.drop.x,s.drop.z)}
   if(corn>0){const tr=hungry();if(tr&&tr.feed===0)return setTask('🐔','Trog leer – Hühner füttern',tr.zone.x,tr.zone.z)}
   const egg=findEgg(pp.x,pp.z);if(egg&&Math.hypot(egg.x-pp.x,egg.z-pp.z)<14)return setTask('🥚','Eier einsammeln',egg.x,egg.z);
   const pl=findRipe(pp.x,pp.z);if(pl)return setTask('🌽','Reifen Mais ernten',pl.x,pl.z);
   if(c.n>0){const s=stand();return setTask('🛒','Waren zum Marktstand bringen',s.drop.x,s.drop.z)}
+  if(WH&&whCount()>0&&stands.some(q=>q.queue.length>0&&q.stock.corn.length+q.stock.egg.length===0))return setTask('📦','Stand leer – Waren aus dem Lager holen',WH.drop.x,WH.drop.z);
   if(pad)return setTask('💰','Freischalten: '+pad.u.title,pad.g.position.x,pad.g.position.z);
   setTask('⏳','Mais wächst nach …',-8,-5)}
 function updateGuide(dt,t){taskT-=dt;if(taskT<=0){taskT=.3;computeTask();setText('taskIcon',task.icon);setText('taskText',task.text)}
@@ -750,6 +782,11 @@ function updatePlayer(dt,t){
   if(!c.full)for(const y of yards)for(const e of y.eggs){if(Math.hypot(e.x-pos.x,e.z-pos.z)<.95){pickEgg(e,c);P.cd=.08;P.h.actT=P.h.actDur=.28;return}}
   // --- Trog füttern
   for(const y of yards){const tr=y.trough;if(Math.hypot(tr.zone.x-pos.x,tr.zone.z-pos.z)<1.15&&c.count('corn')>0){if(feedTrough(c,tr)){P.cd=.12;return}}}
+  // --- Lagerhaus: einlagern (Korb mit Waren) oder abholen (leerer Korb)
+  if(WH){const inZone=Math.hypot(WH.drop.x-pos.x,WH.drop.z-pos.z)<1.2;
+    if(!inZone)P.whMode=null;else{if(!P.whMode)P.whMode=c.n>0?'in':'out';
+      if(P.whMode==='in'&&c.n>0&&depositStand(c,WH)){P.cd=.08;return}
+      if(P.whMode==='out'&&withdrawStore(c,WH)){P.cd=.08;P.h.actT=P.h.actDur=.25;return}}}
   // --- Waren am Stand abgeben
   for(const st of stands){if(Math.hypot(st.drop.x-pos.x,st.drop.z-pos.z)<1.25&&c.n>0){if(depositStand(c,st)){P.cd=.06;return}
     if(!P.fullWarned){P.fullWarned=true;toast('🛒 Stand ist voll – warte auf Kunden oder nutze den 2. Stand');setTimeout(()=>P.fullWarned=false,4000)}}}
@@ -785,7 +822,7 @@ addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updat
 updateCamera(0,true);$('loading').remove();frame();
 
 // Test-/Debug-Schnittstelle (für automatisierte Tests)
-window.__farm={S,P,yards,fields,plants,stands,customers,workers,pads,flyers,dbg,virt,get money(){return S.money}};
+window.__farm={get WH(){return WH},completeUnlock,S,P,yards,fields,plants,stands,customers,workers,pads,flyers,dbg,virt,get money(){return S.money}};
 </script>
 </body>
 </html>
